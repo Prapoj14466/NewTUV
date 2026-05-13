@@ -1,0 +1,344 @@
+ยินดีครับคุณ Yoyo ในฐานะ Full Stack Developer ผมได้ออกแบบระบบ **Audit Report TUV** โดยใช้ Google Apps Script (GAS) เชื่อมต่อกับ Google Sheets เป็นฐานข้อมูล และใช้โครงสร้าง UI ที่ทันสมัยแบบ Single Page Application (SPA) เพื่อให้ตอบโจทย์การทำงานในโรงงานและการจัดการข้อมูล Audit อย่างมืออาชีพครับ
+### ขั้นตอนที่ 1: การเตรียม Database ใน Google Sheets
+ 1. สร้าง Google Sheets ใหม่ ตั้งชื่อว่า **Audit_Report_DB**
+ 2. ที่ Sheet1 ให้เปลี่ยนชื่อเป็น Data และสร้าง Header ในแถวแรก (Row 1) ดังนี้:
+   * A1: Timestamp | B1: Audit_Data | C1: Plant | D1: Detail | E1: Report_Files | F1: Finding | G1: Dept_In_Charge | H1: CAR_Internal_File | I1: CAR_Internal_Detail | J1: Five_Why_File | K1: Five_Why_Detail | L1: CAR_Email | M1: CAR_Deadline | N1: CAR_Internal_Deadline | O1: Status_CAR_Internal | P1: Evidence_Deadline | Q1: Evidence_Status | R1: Follow_up_1 | S1: Follow_up_2 | T1: Follow_up_3 | U1: Yokoten_File | V1: Yokoten_Detail
+ 3. สร้าง Folder ใน Google Drive เพื่อเก็บไฟล์ที่อัปโหลด และจดจำ Folder ID ไว้
+### ขั้นตอนที่ 2: โค้ดสำหรับระบบ (4 ไฟล์)
+ให้คุณไปที่ Extensions > Apps Script แล้วสร้างไฟล์ดังนี้ครับ:
+#### 1. Code.gs (Backend Logic)
+```javascript
+function doGet() {
+  return HtmlService.createTemplateFromFile('index')
+    .evaluate()
+    .setTitle('Audit Report TUV System')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// ฟังก์ชันบันทึกข้อมูลและจัดการไฟล์
+function processForm(obj) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Data');
+  const folderId = 'ใส่_FOLDER_ID_ที่นี่'; // แทนที่ด้วย ID ของโฟลเดอร์ใน Drive
+  const folder = DriveApp.getFolderById(folderId);
+
+  // ฟังก์ชันช่วยอัปโหลดไฟล์
+  function uploadFile(fileData, fileName) {
+    if (!fileData || fileData === "") return "";
+    const blob = Utilities.newBlob(Utilities.base64Decode(fileData.split(",")[1]), fileData.split(";")[0].split(":")[1], fileName);
+    const file = folder.createFile(blob);
+    return file.getUrl();
+  }
+
+  const reportFileUrl = uploadFile(obj.reportFile, "Report_" + obj.auditDate);
+  const carFileUrl = uploadFile(obj.carFile, "CAR_" + obj.auditDate);
+  const fiveWhyFileUrl = uploadFile(obj.fiveWhyFile, "5Why_" + obj.auditDate);
+  const yokotenFileUrl = uploadFile(obj.yokotenFile, "Yokoten_" + obj.auditDate);
+
+  sheet.appendRow([
+    new Date(),
+    obj.auditDate,
+    obj.plant,
+    obj.detail,
+    reportFileUrl,
+    obj.finding.join(", "),
+    obj.dept,
+    carFileUrl,
+    obj.carDetail,
+    fiveWhyFileUrl,
+    obj.fiveWhyDetail,
+    obj.carEmail,
+    obj.carDeadline,
+    obj.carIntDeadline,
+    obj.statusCar,
+    obj.evidenceDeadline,
+    obj.evidenceStatus,
+    obj.follow1,
+    obj.follow2,
+    obj.follow3,
+    yokotenFileUrl,
+    obj.yokotenDetail
+  ]);
+  
+  return "Success";
+}
+
+function getDashboardData() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Data');
+  return sheet.getDataRange().getValues();
+}
+
+```
+#### 2. index.html (Main Structure)
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <?!= include('stylesheet'); ?>
+</head>
+<body>
+    <div class="container-fluid">
+        <nav class="navbar navbar-dark bg-dark mb-4 shadow">
+            <div class="container-fluid">
+                <span class="navbar-brand mb-0 h1"><i class="bi bi-shield-check"></i> Audit Report TUV</span>
+            </div>
+        </nav>
+
+        <ul class="nav nav-pills mb-3 justify-content-center" id="pills-tab" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" id="tab-form" data-bs-toggle="pill" data-bs-target="#content-form">Add New Report</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="tab-dash" data-bs-toggle="pill" data-bs-target="#content-dash" onclick="loadDashboard()">Dashboard</button>
+            </li>
+        </ul>
+
+        <div class="tab-content mt-4">
+            <div class="tab-pane fade show active" id="content-form">
+                <div class="card shadow-sm mx-auto" style="max-width: 900px;">
+                    <div class="card-body">
+                        <form id="auditForm">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Audit Date</label>
+                                    <input type="date" name="auditDate" class="form-control" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Plant</label>
+                                    <select name="plant" class="form-select">
+                                        <option value="HMM2">HMM2</option>
+                                        <option value="Lopburi">Lopburi</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Dept In charge</label>
+                                    <select name="dept" class="form-select">
+                                        <option>PC</option><option>MC</option><option>QC</option>
+                                        <option>PRO</option><option>N’D</option><option>ENG</option>
+                                        <option>PE</option><option>Tooling</option><option>ISO</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="col-12">
+                                    <label class="form-label">Detail</label>
+                                    <textarea name="detail" class="form-control" rows="2"></textarea>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label class="form-label">Report Files (Drop here)</label>
+                                    <input type="file" id="reportFile" class="form-control">
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label class="form-label">Finding (Multi-select)</label>
+                                    <select name="finding" class="form-select" multiple size="4">
+                                        <option value="nc1">nc1 (Major NC)</option>
+                                        <option value="nc2_hmm">nc2 (Minor NC) HMM</option>
+                                        <option value="nc2_lpb">nc2 (Minor NC) LPB</option>
+                                        <option value="ofi_hmm">OFI HMM</option>
+                                        <option value="ofi_lpb">OFI LPB</option>
+                                        <option value="comm_hmm">Comment HMM</option>
+                                        <option value="comm_lpb">Comment LPB</option>
+                                    </select>
+                                </div>
+
+                                <hr>
+                                <div class="col-md-6">
+                                    <label class="form-label">CAR Internal File & Detail</label>
+                                    <input type="file" id="carFile" class="form-control mb-2">
+                                    <input type="text" name="carDetail" class="form-control" placeholder="Detail...">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">5 Why File & Detail</label>
+                                    <input type="file" id="fiveWhyFile" class="form-control mb-2">
+                                    <input type="text" name="fiveWhyDetail" class="form-control" placeholder="Detail...">
+                                </div>
+
+                                <div class="col-md-4">
+                                    <label class="form-label">CAR In charge (Email)</label>
+                                    <input type="email" name="carEmail" class="form-control" list="emailList">
+                                    <datalist id="emailList">
+                                        <option value="admin@company.com">
+                                        <option value="pe_manager@company.com">
+                                    </datalist>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">CAR Deadline</label>
+                                    <input type="date" name="carDeadline" class="form-control">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Status CAR Internal</label>
+                                    <select name="statusCar" class="form-select">
+                                        <option value="open">Open</option>
+                                        <option value="close">Close</option>
+                                    </select>
+                                </div>
+
+                                <div class="col-12 text-center mt-4">
+                                    <button type="submit" class="btn btn-primary btn-lg px-5">Submit Report</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="content-dash">
+                <div class="card shadow-sm">
+                    <div class="card-body overflow-auto">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th><th>Plant</th><th>Dept</th><th>Finding</th><th>CAR Status</th><th>Evidence</th><th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dash-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= include('javascript'); ?>
+</body>
+</html>
+
+```
+#### 3. stylesheet.html (CSS)
+```html
+<style>
+    :root {
+        --primary-color: #0d6efd;
+        --bg-light: #f8f9fa;
+    }
+    body {
+        background-color: var(--bg-light);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    .card {
+        border: none;
+        border-radius: 12px;
+    }
+    .nav-pills .nav-link {
+        border-radius: 20px;
+        color: #555;
+    }
+    .nav-pills .nav-link.active {
+        background-color: var(--primary-color);
+        box-shadow: 0 4px 10px rgba(13, 110, 253, 0.3);
+    }
+    .form-control:focus {
+        box-shadow: none;
+        border-color: var(--primary-color);
+    }
+    .status-badge {
+        padding: 5px 12px;
+        border-radius: 15px;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        font-weight: bold;
+    }
+    .status-open { background: #ffeeba; color: #856404; }
+    .status-close { background: #d4edda; color: #155724; }
+</style>
+
+```
+#### 4. javascript.html (Frontend Logic)
+```html
+<script>
+    document.getElementById('auditForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const form = e.target;
+        const submitBtn = form.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.innerText = "Processing...";
+
+        const fileFields = ['reportFile', 'carFile', 'fiveWhyFile'];
+        const uploads = {};
+        
+        // อ่านไฟล์เป็น Base64
+        const readFiles = fileFields.map(id => {
+            return new Promise((resolve) => {
+                const file = document.getElementById(id).files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve({id: id, data: e.target.result});
+                    reader.readAsDataURL(file);
+                } else {
+                    resolve({id: id, data: ""});
+                }
+            });
+        });
+
+        Promise.all(readFiles).then(results => {
+            const formData = {
+                auditDate: form.auditDate.value,
+                plant: form.plant.value,
+                dept: form.dept.value,
+                detail: form.detail.value,
+                finding: Array.from(form.finding.selectedOptions).map(o => o.value),
+                carDetail: form.carDetail.value,
+                fiveWhyDetail: form.fiveWhyDetail.value,
+                carEmail: form.carEmail.value,
+                carDeadline: form.carDeadline.value,
+                statusCar: form.statusCar.value,
+                reportFile: results.find(r => r.id === 'reportFile').data,
+                carFile: results.find(r => r.id === 'carFile').data,
+                fiveWhyFile: results.find(r => r.id === 'fiveWhyFile').data,
+                // ข้อมูลอื่นๆ ใส่เพิ่มตามโครงสร้าง
+                follow1: "", follow2: "", follow3: "", yokotenFile: "", yokotenDetail: ""
+            };
+
+            google.script.run.withSuccessHandler(() => {
+                alert("บันทึกข้อมูลเรียบร้อยแล้ว!");
+                form.reset();
+                submitBtn.disabled = false;
+                submitBtn.innerText = "Submit Report";
+            }).processForm(formData);
+        });
+    });
+
+    function loadDashboard() {
+        const body = document.getElementById('dash-body');
+        body.innerHTML = '<tr><td colspan="7" class="text-center">Loading...</td></tr>';
+        
+        google.script.run.withSuccessHandler(data => {
+            body.innerHTML = "";
+            // ตัด header ออก (แถวแรก)
+            data.slice(1).forEach(row => {
+                const tr = document.createElement('tr');
+                const statusClass = row[14] === 'close' ? 'status-close' : 'status-open';
+                tr.innerHTML = `
+                    <td>${row[1] ? new Date(row[1]).toLocaleDateString() : '-'}</td>
+                    <td>${row[2]}</td>
+                    <td>${row[6]}</td>
+                    <td><small>${row[5]}</small></td>
+                    <td><span class="status-badge ${statusClass}">${row[14]}</span></td>
+                    <td>${row[16]}</td>
+                    <td><button class="btn btn-sm btn-outline-primary">View</button></td>
+                `;
+                body.appendChild(tr);
+            });
+        }).getDashboardData();
+    }
+</script>
+
+```
+### การตั้งค่าและการใช้งาน
+ 1. **Folder ID**: อย่าลืมนำ ID ของ Folder ใน Google Drive มาใส่ใน Code.gs ตรงตัวแปร folderId
+ 2. **Deploy**:
+   * กดปุ่ม **Deploy** > **New Deployment**
+   * เลือกประเภทเป็น **Web App**
+   * ตั้งค่า Execute as: **Me** และ Who has access: **Anyone with Google Account** (หรือในองค์กร)
+ 3. **การจัดการ Admin**: ในช่อง Status CAR internal และ Evidence Status คุณสามารถเพิ่ม Logic ตรวจสอบ Email ใน Code.gs ได้ว่าถ้าไม่ใช่ Admin จะไม่สามารถกดเปลี่ยนค่าได้ครับ
+ระบบนี้ถูกออกแบบมาให้ยืดหยุ่น โดยเฉพาะส่วนการเลือก Plant (HMM2/Lopburi) และแผนก (PE) ซึ่งสอดคล้องกับสภาพแวดล้อมการทำงานของคุณ **Yoyo** ที่ NMB-Minebea ครับ หากต้องการปรับแต่งส่วน Dashboard ให้แสดงเป็นกราฟ (Chart.js) เพิ่มเติม แจ้งได้เลยนะครับ!
