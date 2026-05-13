@@ -1,0 +1,157 @@
+การเพิ่ม **Chart.js** เข้าไปใน Dashboard จะช่วยให้ผู้บริหารหรือหัวหน้างานมองเห็นภาพรวมของ Audit Report ได้ชัดเจนขึ้นมากเลยครับ เช่น สัดส่วน CAR ที่เปิด/ปิดอยู่ หรือจำนวน Issue แยกตาม Plant และแผนก
+เพื่อให้ง่ายต่อการนำไปใช้งาน นี่คือวิธีการปรับแต่งไฟล์เดิมของคุณครับ:
+### 1. ไฟล์ index.html (เพิ่ม Library และจุดวางกราฟ)
+ให้คุณเพิ่มบรรทัดโค้ดต่อไปนี้ลงในไฟล์ index.html ครับ
+**ส่วนที่ 1:** เพิ่ม CDN ของ Chart.js (วางไว้ก่อนปิดแท็ก </body> หรือใน <head> ก็ได้ครับ)
+```html
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+```
+**ส่วนที่ 2:** เพิ่มโครงสร้างพื้นที่วาดกราฟ (Canvas) ลงในส่วน Dashboard (นำไปวางไว้ใน <div id="content-dash"> ก่อนตารางแสดงข้อมูล)
+```html
+<div class="row mb-4">
+    <!-- กราฟสถานะ CAR -->
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h6 class="card-title text-center text-secondary fw-bold">CAR Status (Internal)</h6>
+                <canvas id="statusChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <!-- กราฟแยกตาม Plant -->
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h6 class="card-title text-center text-secondary fw-bold">Issues by Plant</h6>
+                <canvas id="plantChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <!-- กราฟแยกตามแผนก -->
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h6 class="card-title text-center text-secondary fw-bold">Issues by Department</h6>
+                <canvas id="deptChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+```
+### 2. ไฟล์ javascript.html (ประมวลผลข้อมูลและสร้างกราฟ)
+เราจะแก้ไขฟังก์ชัน loadDashboard() เล็กน้อย เพื่อให้มันดึงข้อมูลจาก Google Sheets มานับจำนวน (Aggregate) ก่อนส่งให้ Chart.js และสร้างฟังก์ชันช่วยวาดกราฟครับ
+ให้แทนที่ส่วนของ Dashboard ใน <script> ด้วยโค้ดนี้:
+```javascript
+// ตัวแปร Global สำหรับเก็บ instance ของกราฟ (ป้องกันปัญหากราฟกระพริบเวลาโหลดใหม่)
+let dashboardCharts = {};
+
+function loadDashboard() {
+    const body = document.getElementById('dash-body');
+    body.innerHTML = '<tr><td colspan="7" class="text-center">Loading...</td></tr>';
+    
+    google.script.run.withSuccessHandler(data => {
+        body.innerHTML = "";
+        const rows = data.slice(1); // ตัด Header ออก
+        
+        // ตัวแปรสำหรับเก็บข้อมูลสรุปยอด
+        let statusCount = { open: 0, close: 0 };
+        let plantCount = { HMM2: 0, Lopburi: 0 };
+        let deptCount = {};
+
+        rows.forEach(row => {
+            // โค้ดสร้างตาราง (เหมือนเดิม)
+            const tr = document.createElement('tr');
+            const statusClass = row[14] === 'close' ? 'status-close' : 'status-open';
+            tr.innerHTML = `
+                <td>${row[1] ? new Date(row[1]).toLocaleDateString('en-GB') : '-'}</td>
+                <td>${row[2]}</td>
+                <td>${row[6]}</td>
+                <td><small>${row[5]}</small></td>
+                <td><span class="status-badge ${statusClass}">${row[14]}</span></td>
+                <td>${row[16] || '-'}</td>
+                <td><button class="btn btn-sm btn-outline-primary">View</button></td>
+            `;
+            body.appendChild(tr);
+
+            // --- การประมวลผลข้อมูลเพื่อทำกราฟ ---
+            // อ้างอิง Index: Plant = row[2], Dept = row[6], Status CAR = row[14]
+            const plant = row[2];
+            const dept = row[6];
+            const status = row[14]?.toString().toLowerCase();
+
+            // นับยอด Status
+            if (status === 'open') statusCount.open++;
+            if (status === 'close') statusCount.close++;
+
+            // นับยอด Plant
+            if (plant === 'HMM2') plantCount.HMM2++;
+            if (plant === 'Lopburi') plantCount.Lopburi++;
+
+            // นับยอดแผนก
+            if (dept) {
+                deptCount[dept] = (deptCount[dept] || 0) + 1;
+            }
+        });
+
+        // หลังจากวนลูปเสร็จ ให้ส่งข้อมูลไปวาดกราฟ
+        drawChart('statusChart', 'pie', ['Open', 'Close'], [statusCount.open, statusCount.close], ['#ffc107', '#198754']);
+        drawChart('plantChart', 'doughnut', ['HMM2', 'Lopburi'], [plantCount.HMM2, plantCount.Lopburi], ['#0d6efd', '#6f42c1']);
+        drawChart('deptChart', 'bar', Object.keys(deptCount), Object.values(deptCount), ['#0dcaf0']);
+
+    }).getDashboardData();
+}
+
+// ฟังก์ชันช่วยสร้างและอัปเดตกราฟ Chart.js
+function drawChart(canvasId, chartType, labels, dataPoints, colors) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    
+    // ทำลายกราฟเก่าทิ้งก่อน (ถ้ามี) ไม่เช่นนั้นเมื่อ Hover กราฟจะซ้อนกัน
+    if (dashboardCharts[canvasId]) {
+        dashboardCharts[canvasId].destroy();
+    }
+
+    // สร้างกราฟใหม่
+    dashboardCharts[canvasId] = new Chart(ctx, {
+        type: chartType,
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Total Issues',
+                data: dataPoints,
+                backgroundColor: colors,
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: chartType !== 'bar', // ซ่อน Legend ในกราฟแท่ง
+                    position: 'bottom'
+                }
+            },
+            scales: chartType === 'bar' ? {
+                y: { beginAtZero: true, ticks: { stepSize: 1 } } // ให้แกน Y เป็นจำนวนเต็ม
+            } : {}
+        }
+    });
+}
+
+```
+### 3. ไฟล์ stylesheet.html (ปรับแต่งความสูงของกล่องกราฟ)
+เพื่อให้กราฟแสดงผลได้สวยงาม ไม่ล้นออกมา แนะนำให้กำหนดความสูงของพื้นที่แสดงผลครับ เพิ่ม CSS นี้ลงไป:
+```html
+<style>
+    /* โค้ดเดิม... */
+    
+    /* เพิ่มสำหรับ Chart.js */
+    canvas {
+        max-height: 250px; /* จำกัดความสูงกราฟไม่ให้ใหญ่เกินไป */
+    }
+</style>
+
+```
+คุณต้องการให้ในตารางข้อมูลมีการสร้างฟังก์ชันระบบปุ่ม View เพื่อเปิดดูรายละเอียดเอกสาร (PDF/Images) แบบ Pop-up Modal ต่อไปเลยไหมครับ?
