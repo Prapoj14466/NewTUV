@@ -1,0 +1,56 @@
+รับทราบครับ! เนื่องจากเป็นระบบ Audit และมีข้อมูลภายในของโรงงาน การจำกัดสิทธิ์ให้ใช้งานได้ **เฉพาะพนักงานในบริษัทเท่านั้น** จึงเป็นเรื่องที่ถูกต้องและปลอดภัยที่สุดครับ
+วิธีการตั้งค่าจำกัดสิทธิ์ใน Google Apps Script (GAS) สามารถทำได้ง่ายๆ ตอนที่เราทำการ Deploy ครับ โดยมีรายละเอียดดังนี้:
+### 1. การตั้งค่าตอน Deploy (จำกัดสิทธิ์ระดับองค์กร)
+เมื่อคุณกด **Deploy > New deployment** (หรือ Manage deployments) ให้ตั้งค่าในส่วนของการเข้าถึงดังนี้:
+ * **Execute as (ทำงานในฐานะ):** แนะนำให้เลือก **User accessing the web app** (ผู้ใช้ที่เข้าถึงเว็บแอป)
+   * *ข้อดี:* ระบบจะเช็คสิทธิ์ Google Drive และ Google Sheets ของพนักงานคนนั้นๆ ว่ามีสิทธิ์เข้าถึงโฟลเดอร์หรือไฟล์ฐานข้อมูลหรือไม่ ทำให้ปลอดภัยมากยิ่งขึ้น (แต่คุณต้องแชร์ Folder และ Sheet ให้พนักงานด้วย)
+   * *ทางเลือก:* หากไม่ต้องการวุ่นวายเรื่องการแชร์ไฟล์ให้ทุกคน สามารถเลือกเป็น **Me** ได้ (ระบบจะทำงานผ่านสิทธิ์ของคุณ แต่ยังจำกัดคนเข้าเว็บได้)
+ * **Who has access (ผู้มีสิทธิ์เข้าถึง):** ให้คลิกและเปลี่ยนจาก Anyone เป็น **Anyone within [ชื่อบริษัท/โดเมนของคุณ]**
+   * *ผลลัพธ์:* เฉพาะผู้ที่ล็อกอินด้วยอีเมลของบริษัท (เช่น @nmb-minebea.com หรือโดเมนบริษัทคุณ) เท่านั้นถึงจะเปิดลิงก์นี้ได้ หากใช้อีเมล @gmail.com ทั่วไป ระบบจะบล็อกการเข้าถึงทันที
+### 2. การอัปเกรดโค้ดเพื่อเก็บ Email คนกรอกแบบอัตโนมัติ (Audit Trail)
+เมื่อเราบังคับให้ทุกคนต้องล็อกอินด้วยอีเมลบริษัทแล้ว เราสามารถดึงอีเมลของคนที่มากรอกข้อมูลบันทึกลงในฐานข้อมูลได้อัตโนมัติ โดยไม่ต้องให้พวกเขาพิมพ์เองครับ
+**วิธีแก้ในไฟล์ Code.gs:**
+เพิ่ม Session.getActiveUser().getEmail() ลงไปในฟังก์ชัน processForm ครับ
+```javascript
+// ตัวอย่างการเพิ่มใน Code.gs
+function processForm(obj) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Data');
+  const folderId = 'ใส่_FOLDER_ID_ที่นี่'; 
+  const folder = DriveApp.getFolderById(folderId);
+
+  // ดึง Email ของคนที่กำลังใช้งานเว็บแอปอยู่ (พนักงานที่ล็อกอิน)
+  const userEmail = Session.getActiveUser().getEmail();
+
+  // ... (โค้ดอัปโหลดไฟล์เหมือนเดิม) ...
+
+  sheet.appendRow([
+    new Date(),               // Timestamp
+    userEmail,                // <--- เพิ่มคอลัมน์เก็บ Email ผู้บันทึกข้อมูล
+    obj.auditDate,
+    obj.plant,
+    // ... ใส่ตัวแปรอื่นๆ ตามลำดับคอลัมน์ใน Google Sheets
+  ]);
+  
+  return "Success";
+}
+
+```
+*หมายเหตุ: หากคุณเพิ่มคอลัมน์ userEmail อย่าลืมไปแทรกคอลัมน์ใน Google Sheets (เช่น คอลัมน์ B) เพื่อให้ข้อมูลตรงกันด้วยนะครับ*
+### 3. การล็อกสิทธิ์ปุ่ม "Admin" สำหรับ Status
+ตามที่คุณออกแบบไว้ว่า Status CAR (Open/Close) admin สามารถเปิดปิดได้ เราสามารถเขียนเช็คอีเมลได้ว่า ถ้าคนล็อกอินไม่ใช่อีเมล Admin จะไม่สามารถกดแก้ไข Status ได้ครับ
+**เพิ่มเช็คสิทธิ์แบบง่ายๆ ใน Code.gs:**
+```javascript
+function getUserRole() {
+  const adminEmails = ["admin@yourcompany.com", "manager@yourcompany.com"];
+  const currentUser = Session.getActiveUser().getEmail();
+  
+  if (adminEmails.includes(currentUser)) {
+    return "admin";
+  } else {
+    return "user";
+  }
+}
+
+```
+แล้วส่งค่าสถานะนี้กลับไปที่หน้า Frontend (index.html) เพื่อทำการซ่อน (Hide) หรือปิดการใช้งาน (Disable) ช่อง Dropdown ที่เป็นของ Admin เท่านั้นครับ
